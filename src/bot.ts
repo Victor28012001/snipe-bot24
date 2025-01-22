@@ -1,6 +1,6 @@
 import { Context, Telegraf } from 'telegraf';
 import { Update } from 'telegraf/typings/core/types/typegram';
-import { VersionedTransaction, Connection, Keypair, clusterApiUrl, SendTransactionError, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { VersionedTransaction, Connection, Keypair, clusterApiUrl, LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import WebSocket from 'ws';
 import dotenv from 'dotenv';
@@ -9,19 +9,6 @@ import { PrismaClient, Prisma } from "@prisma/client";
 export const db = new PrismaClient();
 import * as bip39 from "bip39";
 import { derivePath } from "ed25519-hd-key";
-import {
-    TOKEN_2022_PROGRAM_ID,
-    ASSOCIATED_TOKEN_PROGRAM_ID,
-    AccountLayout,
-    TOKEN_PROGRAM_ID,
-    createAssociatedTokenAccountInstruction,
-    getAssociatedTokenAddress,
-    getOrCreateAssociatedTokenAccount,
-    createMint,
-    mintTo,
-    transfer,
-} from "@solana/spl-token";
-// import { setInterval } from 'timers/promises';
 
 const ws = new WebSocket('wss://pumpportal.fun/api/data');
 const MNEMONIC = process.env.MNEMONIC as string;
@@ -30,12 +17,9 @@ dotenv.config();
 
 const prisma = new PrismaClient();
 
-// Initialize Telegraf bot
+
 const bot: Telegraf<Context<Update>> = new Telegraf(process.env.TELEGRAM_BOT_TOKEN as string);
-// Update the userWallets structure to store selected wallet and wallet list
 const userWallets: { [chatId: string]: { wallets: string[]; selectedWallet?: string } } = {};
-// const RPC_ENDPOINT = process.env.RPC_ENDPOINT as string || "https://api.devnet.solana.com";
-// const web3Connection = new Connection(RPC_ENDPOINT, 'confirmed');
 
 // Define trade history and active token monitoring
 const tradeHistory: Array<{ token: string; action: string; amount: number; buyPrice: number; sellPrice?: number; timestamp?: number }> = [];
@@ -46,7 +30,6 @@ type Token = { name: string; mint: string };
 
 const getKeyPair = (index: number): Keypair => {
     const seed = bip39.mnemonicToSeedSync(MNEMONIC, "");
-    // const hd = HDKey.fromMasterSeed(seed.toString("hex"));
     const path = `m/44'/501'/${index}'/0'`;
     derivePath(path, seed.toString("hex"));
 
@@ -68,7 +51,7 @@ bot.command('start', async (ctx) => {
             "Welcome sir, \nPlease wait while we are loading your data"
         );
 
-        // Check if the user already exists in the database
+        
         const isUser = await db.user.findUnique({
             where: {
                 uuid: chatId,
@@ -83,7 +66,7 @@ bot.command('start', async (ctx) => {
             return;
         }
 
-        // Create a new user and their wallet if they do not exist
+        
         await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             const user = await tx.user.create({
                 data: {
@@ -120,7 +103,7 @@ bot.command('connect_wallet', (ctx) => {
     const chatId = ctx.chat?.id.toString();
     if (!chatId) return;
 
-    const walletAddress = ctx.message?.text?.split(' ')[1]; // Get wallet address from the message
+    const walletAddress = ctx.message?.text?.split(' ')[1];
 
     if (walletAddress) {
         if (!userWallets[chatId]) {
@@ -157,7 +140,6 @@ bot.command('switch_wallet', (ctx) => {
     const selectedWallet = ctx.message?.text?.split(' ')[1]; // Get wallet address to switch to
 
     if (selectedWallet && userWallets[chatId].wallets.includes(selectedWallet)) {
-        // Set the selected wallet
         userWallets[chatId].selectedWallet = selectedWallet;
         ctx.reply(`✅ Switched to wallet ${selectedWallet}`);
     } else {
@@ -207,7 +189,7 @@ async function fetchNewTokens(): Promise<Token[]> {
             reject(err);
         });
 
-        // Optional timeout for resolving tokens
+        
         setTimeout(() => {
             ws.close();
         }, 10000); // Adjust timeout as needed
@@ -243,54 +225,6 @@ const balanceCommand = async (mint: string, bot: Telegraf, chatId: string) => {
 
         console.log(mint)
 
-        // try {
-        //     if (publicKey && CONNECTION) {
-        //       const publicKeys = new PublicKey(publicKey);
-        //       const senderAssociatedTokenAccount = await getAssociatedTokenAddress(
-        //         new PublicKey("3hA3XL7h84N1beFWt3gwSRCDAf5kwZu81Mf1cpUHKzce"),
-        //         publicKeys,
-        //         false,
-        //         TOKEN_PROGRAM_ID,
-        //         ASSOCIATED_TOKEN_PROGRAM_ID,
-        //       );
-        //       const tokenAccountInfo = await CONNECTION.getAccountInfo(senderAssociatedTokenAccount);
-        //       if (tokenAccountInfo) {
-        //         const tokenAccountData = AccountLayout.decode(tokenAccountInfo.data);
-        //         const balance = Number(tokenAccountData.amount) / 10 ** 9;
-        //         setTokenBalance(balance);
-        //       } else {
-        //         setTokenBalance(0);
-        //       }
-        //     }
-        //     setError(null);
-        //   } catch (error) {
-        //     if (error instanceof Error) {
-        //       setError('Error fetching BARK token balance: ' + error.message);
-        //     } else {
-        //       setError('An unknown error occurred.');
-        //     }
-        //   }
-
-        // Get or create the associated token account
-        // const tokenAccount = await getOrCreateAssociatedTokenAccount(
-        //     CONNECTION,
-        //     getKeyPair(user.id),
-        //     new PublicKey(mint),
-        //     getKeyPair(user.id).publicKey
-        // );
-
-        // if(tokenAccount){
-        //     console.log("token account not found")
-        // }
-
-        // // Fetch token balance
-        // const tokenBalance = await CONNECTION.getTokenAccountBalance(tokenAccount.address);
-
-        // if(tokenBalance){
-        //     console.log("token balance not found")
-        // }
-
-        // Fetch SOL balance
         const balance = await CONNECTION.getBalance(publicKey);
 
         if (balance) {
@@ -302,12 +236,6 @@ const balanceCommand = async (mint: string, bot: Telegraf, chatId: string) => {
             chatId,
             `💰 Your current balance is:\n\n` +
             `SOL: ${(balance / LAMPORTS_PER_SOL).toFixed(5)} SOL\n ${publicKey}`
-            //  +
-            // `USDT: ${
-            //     tokenBalance.value.amount &&
-            //     (parseInt(tokenBalance.value.amount) /
-            //         Math.pow(10, tokenBalance.value.decimals)).toFixed(2)
-            // } USDT`
         );
     } catch (error) {
         // Handle errors
@@ -360,78 +288,6 @@ const getSOLBalance = async (chatId: string, publicKey: string, bot: any) => {
 
 
 
-// async function buyToken(mint: string, amount: number, slippage: number, bot: Telegraf, chatId: string) {
-//     try {
-//         const chatIdStr = chatId.toString();
-//         const selectedWallet = userWallets[chatIdStr]?.selectedWallet;
-
-//         console.log('Selected Wallet:', selectedWallet);
-
-//         if (!selectedWallet) {
-//             await bot.telegram.sendMessage(chatId, '❌ No wallet selected. Please connect and select a wallet first.');
-//             return false;
-//         }
-
-//         const privateKey = bs58.decode(selectedWallet);
-
-//         let signerKeyPair;
-//         if (privateKey.length === 64) {
-//             // Valid 64-byte secret key
-//             signerKeyPair = Keypair.fromSecretKey(privateKey);
-//         } else if (privateKey.length === 32) {
-//             // 32-byte private scalar, derive full keypair
-//             const derivedKeyPair = nacl.sign_keyPair_fromSecretKey(privateKey); // Correctly derive keypair
-//             signerKeyPair = Keypair.fromSecretKey(derivedKeyPair.secretKey);
-//         } else {
-//             console.error('Invalid private key length:', privateKey.length);
-//             await bot.telegram.sendMessage(chatId, '❌ Invalid private key length. Please ensure the private key is correct.');
-//             return false;
-//         }
-
-//         const response = await fetch('https://pumpportal.fun/api/trade-local', {
-//             method: 'POST',
-//             headers: { 'Content-Type': 'application/json' },
-//             body: JSON.stringify({
-//                 publicKey: signerKeyPair.publicKey.toBase58(),
-//                 action: 'buy',
-//                 mint,
-//                 denominatedInSol: 'false',
-//                 amount,
-//                 slippage,
-//                 priorityFee: 0.00001,
-//                 pool: 'pump',
-//             }),
-//         });
-
-//         if (response.ok) {
-//             const data = await response.arrayBuffer();
-//             const transaction = VersionedTransaction.deserialize(new Uint8Array(data));
-//             transaction.sign([signerKeyPair]);
-//             const signature = await CONNECTION.sendTransaction(transaction);
-//             console.log(`Transaction successful: https://solscan.io/tx/${signature}`);
-//             await bot.telegram.sendMessage(chatId, `✅ Successfully bought ${amount} of token: ${mint}`);
-//             return true;
-//         } else {
-//             const errorText = await response.text();
-//             console.error('Failed to buy token:', errorText);
-//             await bot.telegram.sendMessage(chatId, `❌ Failed to buy tokens: ${mint}. Error: ${errorText}`);
-//             return false;
-//         }
-//     } catch (error) {
-//         if (error instanceof Error) {
-//             console.error('Error buying token:', error.message);
-//             await bot.telegram.sendMessage(chatId, `❌ Error occurred while buying token: ${mint}. Details: ${error.message}`);
-//         } else {
-//             console.error('Unknown error:', error);
-//             await bot.telegram.sendMessage(chatId, `❌ Unknown error occurred while buying token: ${mint}.`);
-//         }
-//         return false;
-//     }
-// }
-
-
-// Sell token when 20% profit is reached
-
 
 async function buyToken(
     mint: string,
@@ -455,9 +311,6 @@ async function buyToken(
         getSOLBalance(chatId, user.pubKey, bot);
 
         const userPair = getKeyPair(user.id);
-        // const mainPair = getKeyPair(0);
-        // const userPrivateKey = getKeyPair(0).secretKey;
-        // const signerKeyPair = Keypair.fromSecretKey(userPrivateKey);
         const response = await fetch("https://pumpportal.fun/api/trade-local", {
             method: "POST",
             headers: {
@@ -529,35 +382,19 @@ async function buyToken(
             } catch (sendTransactionError: unknown) {
                 if (sendTransactionError instanceof Error) {
                     console.error("SendTransactionError:", sendTransactionError.message);
-                    // await bot.telegram.sendMessage(
-                    //     chatId,
-                    //     `❌ Transaction failed with error: ${sendTransactionError.message}`
-                    // );
                 } else {
                     console.error("Unknown SendTransactionError:", sendTransactionError);
-                    // await bot.telegram.sendMessage(
-                    //     chatId,
-                    //     `❌ Transaction failed with an unknown error.`
-                    // );
                 }
             }
 
         } else {
             const errorText = await response.text();
             console.error("API Error:", errorText);
-            // await bot.telegram.sendMessage(
-            //     chatId,
-            //     `❌ Failed to process the transaction: ${response.statusText}`
-            // );
             return false;
         }
     } catch (error) {
         if (error instanceof Error) {
             console.error("Error buying token:", error.message);
-            // await bot.telegram.sendMessage(
-            //     chatId,
-            //     `❌ Error occurred while buying token: ${error.message} ${SendTransactionError}`
-            // );
         } else {
             console.error("Unknown error:", error);
             await bot.telegram.sendMessage(chatId, "❌ Unknown error occurred.");
@@ -586,10 +423,6 @@ async function sellToken(token: string, amount: number, bot: Telegraf, chatId: s
 
             const trade = tradeHistory.find((t) => t.token === token);
             await bot.telegram.sendMessage(chatId, `✅ ${token} ${trade}`);
-            // if (trade) {
-                // Decode the private key from the selected wallet (assumed to be in base58 format)
-                // const privateKey = bs58.decode(selectedWallet);
-                // const signerKeyPair = Keypair.fromSecretKey(privateKey);
 
                 const response = await fetch('https://pumpportal.fun/api/trade-local', {
                     method: 'POST',
@@ -644,7 +477,7 @@ async function sellToken(token: string, amount: number, bot: Telegraf, chatId: s
                         );
 
                         // Add to trade history
-                        const price = 0; // Define a default price or fetch the actual price
+                        const price = 0;
                         tradeHistory.push({
                             token: token,
                             action: 'sell',
@@ -660,7 +493,7 @@ async function sellToken(token: string, amount: number, bot: Telegraf, chatId: s
                     console.error("API Error:", errorText);
                     throw new Error(`Failed to process the transaction: ${response.statusText}`);
                 }
-            // }
+                
         } catch (error) {
             if (error instanceof Error) {
                 console.error(`Attempt ${attempt} - Error selling token:`, error.message);
