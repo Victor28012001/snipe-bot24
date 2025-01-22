@@ -9,11 +9,19 @@ import { PrismaClient, Prisma } from "@prisma/client";
 export const db = new PrismaClient();
 import * as bip39 from "bip39";
 import { derivePath } from "ed25519-hd-key";
-import { getOrCreateAssociatedTokenAccount } from '@solana/spl-token';
-// import {
-//     createTransferInstruction,
-//     getOrCreateAssociatedTokenAccount,
-//   } from "@solana/spl-token";
+import {
+    TOKEN_2022_PROGRAM_ID,
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+    AccountLayout,
+    TOKEN_PROGRAM_ID,
+    createAssociatedTokenAccountInstruction,
+    getAssociatedTokenAddress,
+    getOrCreateAssociatedTokenAccount,
+    createMint,
+    mintTo,
+    transfer,
+} from "@solana/spl-token";
+// import { setInterval } from 'timers/promises';
 
 const ws = new WebSocket('wss://pumpportal.fun/api/data');
 const MNEMONIC = process.env.MNEMONIC as string;
@@ -26,11 +34,11 @@ const prisma = new PrismaClient();
 const bot: Telegraf<Context<Update>> = new Telegraf(process.env.TELEGRAM_BOT_TOKEN as string);
 // Update the userWallets structure to store selected wallet and wallet list
 const userWallets: { [chatId: string]: { wallets: string[]; selectedWallet?: string } } = {};
-const RPC_ENDPOINT = process.env.RPC_ENDPOINT as string || "https://api.devnet.solana.com";
-const web3Connection = new Connection(RPC_ENDPOINT, 'confirmed');
+// const RPC_ENDPOINT = process.env.RPC_ENDPOINT as string || "https://api.devnet.solana.com";
+// const web3Connection = new Connection(RPC_ENDPOINT, 'confirmed');
 
 // Define trade history and active token monitoring
-const tradeHistory: Array<{ token: string; action: string; amount: number; buyPrice: number; sellPrice?: number }> = [];
+const tradeHistory: Array<{ token: string; action: string; amount: number; buyPrice: number; sellPrice?: number; timestamp?: number }> = [];
 const monitoredTokens: Token[] = [];
 
 // Define the token structure
@@ -232,33 +240,60 @@ const balanceCommand = async (mint: string, bot: Telegraf, chatId: string) => {
         // Get user's public key
         const publicKey = new PublicKey(user.pubKey);
 
-        
-        console.log("ok ooo")
+
         console.log(mint)
 
+        // try {
+        //     if (publicKey && CONNECTION) {
+        //       const publicKeys = new PublicKey(publicKey);
+        //       const senderAssociatedTokenAccount = await getAssociatedTokenAddress(
+        //         new PublicKey("3hA3XL7h84N1beFWt3gwSRCDAf5kwZu81Mf1cpUHKzce"),
+        //         publicKeys,
+        //         false,
+        //         TOKEN_PROGRAM_ID,
+        //         ASSOCIATED_TOKEN_PROGRAM_ID,
+        //       );
+        //       const tokenAccountInfo = await CONNECTION.getAccountInfo(senderAssociatedTokenAccount);
+        //       if (tokenAccountInfo) {
+        //         const tokenAccountData = AccountLayout.decode(tokenAccountInfo.data);
+        //         const balance = Number(tokenAccountData.amount) / 10 ** 9;
+        //         setTokenBalance(balance);
+        //       } else {
+        //         setTokenBalance(0);
+        //       }
+        //     }
+        //     setError(null);
+        //   } catch (error) {
+        //     if (error instanceof Error) {
+        //       setError('Error fetching BARK token balance: ' + error.message);
+        //     } else {
+        //       setError('An unknown error occurred.');
+        //     }
+        //   }
+
         // Get or create the associated token account
-        const tokenAccount = await getOrCreateAssociatedTokenAccount(
-            CONNECTION,
-            getKeyPair(0),
-            new PublicKey(mint),
-            getKeyPair(user.id).publicKey
-        );
+        // const tokenAccount = await getOrCreateAssociatedTokenAccount(
+        //     CONNECTION,
+        //     getKeyPair(user.id),
+        //     new PublicKey(mint),
+        //     getKeyPair(user.id).publicKey
+        // );
 
-        if(tokenAccount){
-            console.log("token account not found")
-        }
+        // if(tokenAccount){
+        //     console.log("token account not found")
+        // }
 
-        // Fetch token balance
-        const tokenBalance = await CONNECTION.getTokenAccountBalance(tokenAccount.address);
+        // // Fetch token balance
+        // const tokenBalance = await CONNECTION.getTokenAccountBalance(tokenAccount.address);
 
-        if(tokenBalance){
-            console.log("token balance not found")
-        }
+        // if(tokenBalance){
+        //     console.log("token balance not found")
+        // }
 
         // Fetch SOL balance
         const balance = await CONNECTION.getBalance(publicKey);
 
-        if(balance){
+        if (balance) {
             console.log("balance not found")
         }
 
@@ -266,22 +301,23 @@ const balanceCommand = async (mint: string, bot: Telegraf, chatId: string) => {
         await bot.telegram.sendMessage(
             chatId,
             `💰 Your current balance is:\n\n` +
-            `SOL: ${(balance / LAMPORTS_PER_SOL).toFixed(2)} SOL\n` +
-            `USDT: ${
-                tokenBalance.value.amount &&
-                (parseInt(tokenBalance.value.amount) /
-                    Math.pow(10, tokenBalance.value.decimals)).toFixed(2)
-            } USDT`
+            `SOL: ${(balance / LAMPORTS_PER_SOL).toFixed(5)} SOL\n ${publicKey}`
+            //  +
+            // `USDT: ${
+            //     tokenBalance.value.amount &&
+            //     (parseInt(tokenBalance.value.amount) /
+            //         Math.pow(10, tokenBalance.value.decimals)).toFixed(2)
+            // } USDT`
         );
     } catch (error) {
         // Handle errors
         if (error instanceof Error) {
-            console.error("Error fetching balance:", error.message);
+            console.error("Error fetching balance:", error);
 
             // Notify the user about the error
             await bot.telegram.sendMessage(
                 chatId,
-                `❌ An error occurred while fetching your balance: ${error.message}`
+                `❌ An error occurred while fetching your balance: ${error}`
             );
         } else {
             console.error("Unknown error fetching balance:", error);
@@ -292,6 +328,33 @@ const balanceCommand = async (mint: string, bot: Telegraf, chatId: string) => {
                 "❌ An unknown error occurred while fetching your balance."
             );
         }
+    }
+};
+
+const getSOLBalance = async (chatId: string, publicKey: string, bot: any) => {
+    try {
+        // Convert string publicKey into a valid PublicKey object
+        const walletPublicKey = new PublicKey(publicKey);
+
+        // Fetch balance
+        const balance = await CONNECTION.getBalance(walletPublicKey);
+
+        // Check and send message
+        if (balance === 0) {
+            console.log("No SOL found in the wallet.");
+            await bot.telegram.sendMessage(chatId, `🚨 Your wallet has no SOL balance.\n\nPublic Key: ${publicKey}`);
+        } else {
+            console.log(`SOL Balance: ${(balance / LAMPORTS_PER_SOL).toFixed(5)} SOL`);
+            await bot.telegram.sendMessage(
+                chatId,
+                `💰 Your current balance is:\n\n` +
+                `SOL: ${(balance / LAMPORTS_PER_SOL).toFixed(5)} SOL\n` +
+                `Public Key: ${publicKey}`
+            );
+        }
+    } catch (err) {
+        console.error("Error fetching SOL balance:", err);
+        await bot.telegram.sendMessage(chatId, "⚠️ Failed to fetch SOL balance. Please check your public key.");
     }
 };
 
@@ -344,7 +407,7 @@ const balanceCommand = async (mint: string, bot: Telegraf, chatId: string) => {
 //             const data = await response.arrayBuffer();
 //             const transaction = VersionedTransaction.deserialize(new Uint8Array(data));
 //             transaction.sign([signerKeyPair]);
-//             const signature = await web3Connection.sendTransaction(transaction);
+//             const signature = await CONNECTION.sendTransaction(transaction);
 //             console.log(`Transaction successful: https://solscan.io/tx/${signature}`);
 //             await bot.telegram.sendMessage(chatId, `✅ Successfully bought ${amount} of token: ${mint}`);
 //             return true;
@@ -389,11 +452,12 @@ async function buyToken(
         }
 
         balanceCommand(mint, bot, chatId)
+        getSOLBalance(chatId, user.pubKey, bot);
 
         const userPair = getKeyPair(user.id);
-        const mainPair = getKeyPair(0);
-        const userPrivateKey = getKeyPair(0).secretKey
-        const signerKeyPair = Keypair.fromSecretKey(userPrivateKey);
+        // const mainPair = getKeyPair(0);
+        // const userPrivateKey = getKeyPair(0).secretKey;
+        // const signerKeyPair = Keypair.fromSecretKey(userPrivateKey);
         const response = await fetch("https://pumpportal.fun/api/trade-local", {
             method: "POST",
             headers: {
@@ -425,10 +489,10 @@ async function buyToken(
             try {
                 const signature = await CONNECTION.sendTransaction(tx);
                 const confirmation = await CONNECTION.confirmTransaction(signature, 'confirmed');
-            
+
                 if (confirmation.value.err) {
                     console.error("Transaction failed:", confirmation.value.err);
-            
+
                     const transactionDetails = await CONNECTION.getTransaction(signature);
                     const logs = transactionDetails?.meta?.logMessages;
                     if (logs && logs.length > 0) {
@@ -449,39 +513,51 @@ async function buyToken(
                         chatId,
                         `✅ Successfully bought ${amount} tokens (mint: ${mint}). Transaction: https://solscan.io/tx/${signature}`
                     );
+
+                    // Add to trade history
+                    const price = 0; // Define a default price or fetch the actual price
+                    tradeHistory.push({
+                        token: mint,
+                        action: 'buy',
+                        amount,
+                        buyPrice: price,
+                        timestamp: Date.now(),
+                    });
+
+                    return true;
                 }
             } catch (sendTransactionError: unknown) {
                 if (sendTransactionError instanceof Error) {
                     console.error("SendTransactionError:", sendTransactionError.message);
-                    await bot.telegram.sendMessage(
-                        chatId,
-                        `❌ Transaction failed with error: ${sendTransactionError.message}`
-                    );
+                    // await bot.telegram.sendMessage(
+                    //     chatId,
+                    //     `❌ Transaction failed with error: ${sendTransactionError.message}`
+                    // );
                 } else {
                     console.error("Unknown SendTransactionError:", sendTransactionError);
-                    await bot.telegram.sendMessage(
-                        chatId,
-                        `❌ Transaction failed with an unknown error.`
-                    );
+                    // await bot.telegram.sendMessage(
+                    //     chatId,
+                    //     `❌ Transaction failed with an unknown error.`
+                    // );
                 }
             }
-            
+
         } else {
             const errorText = await response.text();
             console.error("API Error:", errorText);
-            await bot.telegram.sendMessage(
-                chatId,
-                `❌ Failed to process the transaction: ${response.statusText}`
-            );
+            // await bot.telegram.sendMessage(
+            //     chatId,
+            //     `❌ Failed to process the transaction: ${response.statusText}`
+            // );
             return false;
         }
     } catch (error) {
         if (error instanceof Error) {
             console.error("Error buying token:", error.message);
-            await bot.telegram.sendMessage(
-                chatId,
-                `❌ Error occurred while buying token: ${error.message} ${SendTransactionError}`
-            );
+            // await bot.telegram.sendMessage(
+            //     chatId,
+            //     `❌ Error occurred while buying token: ${error.message} ${SendTransactionError}`
+            // );
         } else {
             console.error("Unknown error:", error);
             await bot.telegram.sendMessage(chatId, "❌ Unknown error occurred.");
@@ -490,55 +566,116 @@ async function buyToken(
     }
 }
 
-async function sellToken(token: string, amount: number, currentPrice: number, bot: Telegraf, chatId: string) {
-    const chatIdStr = chatId.toString();
-    const selectedWallet = userWallets[chatIdStr]?.selectedWallet;
+async function sellToken(token: string, amount: number, bot: Telegraf, chatId: string, retries: number = 3) {
+    const user = await db.user.findUnique({ where: { uuid: String(chatId) } });
 
-    if (!selectedWallet) {
-        await bot.telegram.sendMessage(chatId, '❌ No wallet selected. Please connect and select a wallet first.');
+    if (!user || !user.pubKey) {
+        await bot.telegram.sendMessage(
+            chatId,
+            "❌ User not found or required keys are missing."
+        );
         return false;
     }
 
-    const trade = tradeHistory.find((t) => t.token === token && t.action === 'buy');
-    if (trade && currentPrice >= trade.buyPrice * 1.2) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
         try {
-            // Decode the private key from the selected wallet (assumed to be in base58 format)
-            const privateKey = bs58.decode(selectedWallet);
-            const signerKeyPair = Keypair.fromSecretKey(privateKey);
+            await balanceCommand(token, bot, chatId);
+            await getSOLBalance(chatId, user.pubKey, bot);
 
-            const response = await fetch('https://pumpportal.fun/api/trade-local', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    publicKey: signerKeyPair.publicKey.toBase58(),
-                    action: 'sell',
-                    mint: token,
-                    denominatedInSol: 'false',
-                    amount,
-                    slippage: 10,
-                    priorityFee: 0.00001,
-                    pool: 'pump',
-                }),
-            });
+            const userPair = getKeyPair(user.id);
 
-            if (response.status === 200) {
-                const data = await response.arrayBuffer();
-                const transaction = VersionedTransaction.deserialize(new Uint8Array(data));
-                transaction.sign([signerKeyPair]);
-                const signature = await web3Connection.sendTransaction(transaction);
-                console.log(`Transaction successful: https://solscan.io/tx/${signature}`);
-                await bot.telegram.sendMessage(chatId, `✅ Successfully sold ${amount} of token: ${token} at 20% profit!`);
-                trade.sellPrice = currentPrice;
-                return true;
-            } else {
-                console.error('Failed to sell token:', await response.text());
-                await bot.telegram.sendMessage(chatId, `❌ Failed to sell token: ${token}`);
-                return false;
-            }
+            const trade = tradeHistory.find((t) => t.token === token);
+            await bot.telegram.sendMessage(chatId, `✅ ${token} ${trade}`);
+            // if (trade) {
+                // Decode the private key from the selected wallet (assumed to be in base58 format)
+                // const privateKey = bs58.decode(selectedWallet);
+                // const signerKeyPair = Keypair.fromSecretKey(privateKey);
+
+                const response = await fetch('https://pumpportal.fun/api/trade-local', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        publicKey: userPair.publicKey,
+                        action: 'sell',
+                        mint: token,
+                        denominatedInSol: 'false',
+                        amount,
+                        slippage: 15,
+                        priorityFee: 0.00001,
+                        pool: 'pump',
+                    }),
+                });
+
+                if (response.status === 200) {
+                    const data = await response.arrayBuffer();
+                    const tx = VersionedTransaction.deserialize(new Uint8Array(data));
+
+                    console.log(userPair);
+                    const { blockhash } = await CONNECTION.getLatestBlockhash();
+                    tx.message.recentBlockhash = blockhash;
+                    tx.sign([userPair]);
+
+                    // Send the transaction to the Solana network
+                    const signature = await CONNECTION.sendTransaction(tx);
+                    const confirmation = await CONNECTION.confirmTransaction(signature, 'confirmed');
+
+                    if (confirmation.value.err) {
+                        console.error("Transaction failed:", confirmation.value.err);
+
+                        const transactionDetails = await CONNECTION.getTransaction(signature);
+                        const logs = transactionDetails?.meta?.logMessages;
+                        if (logs && logs.length > 0) {
+                            console.error("Transaction logs:", logs);
+                            await bot.telegram.sendMessage(
+                                chatId,
+                                `❌ Transaction failed: ${confirmation.value.err}. Logs: ${logs.join(', ')}`
+                            );
+                        } else {
+                            console.error("No logs available for this transaction.");
+                            await bot.telegram.sendMessage(
+                                chatId,
+                                `❌ Transaction failed: ${confirmation.value.err}. No logs available.`
+                            );
+                        }
+                    } else {
+                        await bot.telegram.sendMessage(
+                            chatId,
+                            `✅ Successfully sold ${amount} of tokens (mint: ${token}) after 20 seconds!. Transaction: https://solscan.io/tx/${signature}`
+                        );
+
+                        // Add to trade history
+                        const price = 0; // Define a default price or fetch the actual price
+                        tradeHistory.push({
+                            token: token,
+                            action: 'sell',
+                            amount,
+                            buyPrice: price,
+                            timestamp: Date.now(),
+                        });
+
+                        return true;
+                    }
+                } else {
+                    const errorText = await response.text();
+                    console.error("API Error:", errorText);
+                    throw new Error(`Failed to process the transaction: ${response.statusText}`);
+                }
+            // }
         } catch (error) {
-            console.error('Error selling token:', error);
-            await bot.telegram.sendMessage(chatId, `❌ Failed to sell token: ${token}`);
-            return false;
+            if (error instanceof Error) {
+                console.error(`Attempt ${attempt} - Error selling token:`, error.message);
+                if (attempt === retries) {
+                    await bot.telegram.sendMessage(
+                        chatId,
+                        `❌ Error occurred while selling token: ${error.message}`
+                    );
+                }
+            } else {
+                console.error(`Attempt ${attempt} - Unknown error:`, error);
+                if (attempt === retries) {
+                    await bot.telegram.sendMessage(chatId, "❌ Unknown error occurred.");
+                }
+            }
         }
     }
 
@@ -553,38 +690,63 @@ async function monitorAndTrade(bot: Telegraf) {
         const newTokens: Token[] = await fetchNewTokens();
         console.log('New tokens detected:', newTokens);
 
+        // Insert new tokens into the tokens table
         for (const token of newTokens) {
-            if (!monitoredTokens.some((t) => t.mint === token.mint)) {
-                monitoredTokens.push(token); // Add to monitoredTokens
-                console.log(`🚀 Monitoring new token: ${token.name} (${token.mint})`);
-
-                await bot.telegram.sendMessage(
-                    process.env.TELEGRAM_CHAT_ID as string,
-                    `🚀 New token detected: ${token.name} (${token.mint})`
-                );
-
-                const buySuccess = await buyToken(token.mint, 1000, 10, bot, process.env.TELEGRAM_CHAT_ID as string);
-                if (buySuccess) {
-                    tradeHistory.push({ token: token.mint, action: 'buy', amount: 1000, buyPrice: 1.0 }); // Dummy buy price
-                }
-            }
+            await db.token.create({
+                data: {
+                    mint: token.mint,
+                    name: token.name,
+                    price: 0,
+                    processed: false, // Add the processed field
+                },
+            });
+            console.log(`🚀 Added new token to database: ${token.name} (${token.mint})`);
         }
 
-        // Check for sell opportunities
-        for (const trade of tradeHistory.filter((t) => t.action === 'buy' && !t.sellPrice)) {
-            const currentPrice = 1.2; // Replace with real price fetching logic
-            await sellToken(trade.token, trade.amount, currentPrice, bot, process.env.TELEGRAM_CHAT_ID as string);
-        }
+        // Retrieve all unprocessed tokens from the tokens table
+        const unprocessedTokens = await db.token.findMany({
+            where: { processed: false },
+        });
+
+        const token = newTokens[0]
+            console.log(`🚀 Monitoring token from database: ${token.name} (${token.mint})`);
+
+            await bot.telegram.sendMessage(
+                process.env.TELEGRAM_CHAT_ID as string,
+                `🚀 Monitoring token from database: ${token.name} (${token.mint})`
+            );
+            setTimeout(async () => {
+                const buySuccess = await buyToken(token.mint, 350000, 10, bot, process.env.TELEGRAM_CHAT_ID as string);
+
+                console.log(buySuccess);
+                // if (buySuccess) {
+                    tradeHistory.push({ token: token.mint, action: 'buy', amount: 350000, buyPrice: 1.0 });
+
+                    // Mark the token as processed in the database
+                    await db.token.update({
+                        where: { mint: token.mint },
+                        data: { processed: true },
+                    });
+
+                    // Add a 20-second delay before attempting to sell
+                    setTimeout(async () => {
+                        await sellToken(token.mint, 350000, bot, process.env.TELEGRAM_CHAT_ID as string); // Assuming 1.2 as the current price
+                    }, 3000); // 20 seconds in milliseconds
+                // }
+
+            }, 60000); // 20 seconds in milliseconds
+        // }
     } catch (error) {
         console.error('Error monitoring tokens:', error);
     }
 }
 
+
 // Start monitoring
 (async () => {
 
     console.log('Starting token monitoring...');
-    setInterval(() => monitorAndTrade(bot), 30000); // Monitor every 30 seconds
+    setInterval(() => { monitorAndTrade(bot); }, 80000); // Monitor every 30 seconds
 
     bot.launch();
 })();
